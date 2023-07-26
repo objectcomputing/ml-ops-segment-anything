@@ -1,0 +1,102 @@
+{
+  "pipelineSpec": {
+    "components": {
+      "comp-batch-prediction": {
+        "executorLabel": "exec-batch-prediction",
+        "inputDefinitions": {
+          "parameters": {
+            "image_dir": {
+              "type": "STRING"
+            }
+          }
+        },
+        "outputDefinitions": {
+          "artifacts": {
+            "visualization": {
+              "artifactType": {
+                "schemaTitle": "system.Markdown",
+                "schemaVersion": "0.0.1"
+              }
+            }
+          }
+        }
+      }
+    },
+    "deploymentSpec": {
+      "executors": {
+        "exec-batch-prediction": {
+          "container": {
+            "args": [
+              "--executor_input",
+              "{{$}}",
+              "--function_to_execute",
+              "batch_prediction"
+            ],
+            "command": [
+              "sh",
+              "-c",
+              "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.20' && \"$0\" \"$@\"\n",
+              "sh",
+              "-ec",
+              "program_path=$(mktemp -d)\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\npython3 -m kfp.v2.components.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+              "\nimport kfp\nfrom kfp.v2 import dsl\nfrom kfp.v2.dsl import *\nfrom typing import *\n\ndef batch_prediction(\n    image_dir: str,\n    visualization: Output[Markdown],\n\n):\n    import torch\n    from typing import Dict, List\n    from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator\n    import base64\n    import numpy as np\n    import cv2\n    import logging\n    from google.cloud import storage\n    import base64\n    import json\n\n    storage_client = storage.Client()\n    bucket = storage_client.bucket('wallace-playground')\n\n    # Initialize Model\n    blob = bucket.blob('model_artifacts/sam_vit_b_01ec64.pth')\n    blob.download_to_filename('sam_vit_b_01ec64.pth')\n    sam = sam_model_registry[\"vit_b\"](checkpoint=\"sam_vit_b_01ec64.pth\")\n    print(torch.cuda.is_available())\n    sam.to(\"cuda\")\n    mask_generator = SamAutomaticMaskGenerator(sam)\n\n    # Initialize Images\n    blobs = bucket.list_blobs(prefix=image_dir)\n    image_extensions = ('.png', '.jpg', '.jpeg')\n    image_blobs = [blob for blob in blobs if blob.name.lower().endswith(image_extensions)]\n\n    # Predict all images\n    results = []\n    for image_blob in image_blobs:\n        image_bytes = image_blob.download_as_bytes()\n        image_base64 = base64.b64encode(image_bytes).decode('utf-8')\n        jpg_as_np = np.frombuffer(image_bytes, dtype=np.uint8)\n        image = cv2.cvtColor(cv2.imdecode(jpg_as_np, flags=1), cv2.COLOR_BGR2RGB)\n        masks = mask_generator.generate(image)\n        prediction = {}\n        prediction[\"file_path\"] = image_blob.name\n        prediction[\"base64\"] = image_base64\n        prediction[\"masks\"] = {}\n        sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)\n        for idx, mask in enumerate(sorted_masks):\n            # TODO: Rewrite the result format, add more related scores and save it into a single json, with mask index\n            # e.g. : {\"mask_1\": ..., \"mask_2\": ...}\n            prediction[\"masks\"][f'mask_{idx}'] = mask['segmentation'].tolist()\n        results.append(prediction)\n\n    # TODO: Use Kubeflow Output to save json\n\n    # TODO: Optimize the visualization\n    with open(visualization.path, 'w') as f:\n        for result in results:\n            f.write(f\"# {result['file_path']} \\n\")\n            for mask_name, mask in result[\"masks\"].items():\n                f.write(f\"## {mask_name} \\n\")\n                f.write(\"<table><tr>\")\n                f.write(f'<td><img src=\"data:image/png;base64,{result[\"base64\"]}\" width=100% align=\"left\"></td>')\n                # TODO: Image Base64 with each single mask, with width=45% and align='right'\n                f.write(f'<td><img src=\"data:image/png;base64,{result[\"base64\"]}\" width=100% align=\"right\"></td>')\n                f.write(\"</tr></table>\\n\\n\")\n                break\n            f.write(f\"## All Masks \\n\")\n            f.write(\"<table><tr>\")\n            f.write(f'<td><img src=\"data:image/png;base64,{result[\"base64\"]}\" width=100% align=\"left\"></td>')\n            # TODO: Image Base64 with all masks, with width=45% and align='right'\n            f.write(f'<td><img src=\"data:image/png;base64,{result[\"base64\"]}\" width=100% align=\"right\"></td>')\n            f.write(\"</tr></table>\\n\\n\")\n\n"
+            ],
+            "image": "gcr.io/ml-ops-segment-anything/sam:latest",
+            "resources": {
+              "accelerator": {
+                "count": "1",
+                "type": "NVIDIA_TESLA_T4"
+              },
+              "cpuLimit": 8.0,
+              "memoryLimit": 64.0
+            }
+          }
+        }
+      }
+    },
+    "pipelineInfo": {
+      "name": "sam-pipeline"
+    },
+    "root": {
+      "dag": {
+        "tasks": {
+          "batch-prediction": {
+            "cachingOptions": {
+              "enableCache": true
+            },
+            "componentRef": {
+              "name": "comp-batch-prediction"
+            },
+            "inputs": {
+              "parameters": {
+                "image_dir": {
+                  "componentInputParameter": "image_dir"
+                }
+              }
+            },
+            "taskInfo": {
+              "name": "batch-prediction"
+            }
+          }
+        }
+      },
+      "inputDefinitions": {
+        "parameters": {
+          "image_dir": {
+            "type": "STRING"
+          }
+        }
+      }
+    },
+    "schemaVersion": "2.0.0",
+    "sdkVersion": "kfp-1.8.20"
+  },
+  "runtimeConfig": {
+    "gcsOutputDirectory": "gs://sam-pipeline-test",
+    "parameters": {
+      "image_dir": {
+        "stringValue": "batch-1"
+      }
+    }
+  }
+}

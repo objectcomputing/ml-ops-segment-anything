@@ -1,0 +1,112 @@
+{
+  "pipelineSpec": {
+    "components": {
+      "comp-batch-prediction": {
+        "executorLabel": "exec-batch-prediction",
+        "inputDefinitions": {
+          "parameters": {
+            "image_dir": {
+              "type": "STRING"
+            },
+            "prompt_json_file": {
+              "type": "STRING"
+            }
+          }
+        },
+        "outputDefinitions": {
+          "artifacts": {
+            "visualization": {
+              "artifactType": {
+                "schemaTitle": "system.Markdown",
+                "schemaVersion": "0.0.1"
+              }
+            }
+          }
+        }
+      }
+    },
+    "deploymentSpec": {
+      "executors": {
+        "exec-batch-prediction": {
+          "container": {
+            "args": [
+              "--executor_input",
+              "{{$}}",
+              "--function_to_execute",
+              "batch_prediction"
+            ],
+            "command": [
+              "sh",
+              "-c",
+              "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.22' && \"$0\" \"$@\"\n",
+              "sh",
+              "-ec",
+              "program_path=$(mktemp -d)\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\npython3 -m kfp.v2.components.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+              "\nimport kfp\nfrom kfp.v2 import dsl\nfrom kfp.v2.dsl import *\nfrom typing import *\n\ndef batch_prediction(\n    image_dir: str,\n    prompt_json_file: str,\n    visualization: Output[Markdown],\n\n):\n    import torch\n    from typing import Dict, List\n    from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator\n    import base64\n    import numpy as np\n    import cv2\n    import logging\n    from google.cloud import storage\n    import base64\n    import json\n\n    storage_client = storage.Client()\n    bucket = storage_client.bucket('sam-pipeline-test')\n    # Get Model artifact from cloud storage\n    blob = bucket.blob('model_artifacts/sam_vit_b_01ec64.pth')\n    blob.download_to_filename('sam_vit_b_01ec64.pth')\n\n    #Load the model\n    sam = sam_model_registry[\"vit_b\"](checkpoint=\"sam_vit_b_01ec64.pth\")\n    print(torch.cuda.is_available())\n    sam.to(\"cuda\")\n    # Automatic mask generation\n    mask_generator = SamAutomaticMaskGenerator(sam)\n    # SAM Masking with prompts\n    sam_predictor = SamPredictor(sam)\n\n    # Initialize Images\n    blobs = bucket.list_blobs(prefix=image_dir)\n    image_extensions = ('.png', '.jpg', '.jpeg')\n    image_blobs = [blob for blob in blobs if blob.name.lower().endswith(image_extensions)]\n\n    #Prompt Json\n    blob = bucket.blob(f'{image_dir}/{prompt_json_file}')\n    prompt_json = json.loads(blob.download_as_text()) #returns prompts dictionary\n\n    #Reshaping the image\n    def reshape_image(image, size=256):\n        # Ratio for showing up in Markdown\n        if image.shape[0] < size and image.shape[1] < size: \n            ratio = 1\n        else: \n            ratio = size / max(image.shape[0], image.shape[1])\n        width = int(image.shape[1] * ratio)\n        height = int(image.shape[0] * ratio)\n        image = cv2.resize(image, (width, height))\n\n        return image\n\n    # Predict all images\n    results = []\n    for image_blob in image_blobs:\n        image_bytes = image_blob.download_as_bytes()\n        image_base64 = base64.b64encode(image_bytes).decode('utf-8')\n        print(image_blob.name)\n        jpg_as_np = np.frombuffer(image_bytes, dtype=np.uint8)\n        image = cv2.cvtColor(cv2.imdecode(jpg_as_np, flags=1), cv2.COLOR_BGR2RGB)\n        # Image resizing\n        image = reshape_image(image)\n        # Encoding it to base64 string\n        image_base64 = base64.b64encode(cv2.imencode('.png', image)[1]).decode()\n\n        # Predictions\n        prediction = {}\n        prediction[\"file_path\"] = image_blob.name\n        prediction[\"base64\"] = image_base64\n        prediction[\"image\"] = image.tolist()\n        prediction[\"masks\"] = {}\n\n        if image_blob.name in prompt_json: # Predicting with prompt inputs\n            prompt_input = np.array(prompt_json[image_blob.name]).reshape(1,2)\n            input_label = np.array([1])\n            masks, scores, logits = sam_predictor.predict(\n                                        point_coords=prompt_input,\n                                        point_labels=input_label,\n                                        multimask_output=False\n                                        )\n            h, w = masks.shape[-2:]\n            masks = masks.reshape(h, w)\n            prediction[\"masks\"]['mask_1'] = masks\n            prediction[\"prediction_type\"] = \"Predicting with Prompts\"\n\n        else: # Predicting without prompt inputs\n            masks = mask_generator.generate(image)\n            sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)\n            for idx, mask in enumerate(sorted_masks):\n            # TODO: Rewrite the result format, add more related scores and save it into a single json, with mask index\n                prediction[\"masks\"][f'mask_{idx}'] = mask['segmentation'].tolist()\n\n            prediction[\"prediction_type\"] = \"Predicting without Prompts\"\n\n\n        results.append(prediction)\n        torch.cuda.empty_cache()\n\n    # TODO: Use Kubeflow Output to save json\n\n    # TODO: Optimize the visualization\n    with open(visualization.path, 'w') as f:\n        alpha = 0.5\n        for result in results:\n            image = np.array(result[\"image\"])\n            f.write(f\"## All Masks \\n\")\n            f.write(f\"# {result['file_path']} \\n\")\n            f.write(\"<table><tr>\")\n            f.write(f'<td><img src=\"data:image/*;base64,{result[\"base64\"]}\" width=100% align=\"left\"></td></tr>\\n')\n            for mask_name, mask in result[\"masks\"].items():\n                f.write(f\"## {mask_name} \\n\\n\")\n                mask = np.array(mask)\n                mask_color = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)\n                mask_color[mask == 0] = [0, 0, 0]\n                mask_color[mask == 1] = [150, 0, 0]\n                mask = np.array(mask)\n                image[mask==1, :] = (1-alpha) * image[mask==1, :] + alpha * mask_color[mask==1, :3]\n                image_base64 = base64.b64encode(cv2.imencode('.png', image)[1]).decode()\n                f.write(\"<tr>\")\n                f.write(f'<td><img src=\"data:image/*;base64,{image_base64}\" width=100% align=\"left\"></td>')\n                f.write(\"</tr>\\n\")\n            f.write(\"</table>\\n\")\n\n"
+            ],
+            "image": "gcr.io/ml-ops-segment-anything/sam:latest",
+            "resources": {
+              "accelerator": {
+                "count": "1",
+                "type": "NVIDIA_TESLA_T4"
+              },
+              "cpuLimit": 8.0,
+              "memoryLimit": 64.0
+            }
+          }
+        }
+      }
+    },
+    "pipelineInfo": {
+      "name": "sam-pipeline-test"
+    },
+    "root": {
+      "dag": {
+        "tasks": {
+          "batch-prediction": {
+            "cachingOptions": {
+              "enableCache": true
+            },
+            "componentRef": {
+              "name": "comp-batch-prediction"
+            },
+            "inputs": {
+              "parameters": {
+                "image_dir": {
+                  "componentInputParameter": "image_dir"
+                },
+                "prompt_json_file": {
+                  "runtimeValue": {
+                    "constantValue": {
+                      "stringValue": "prompts_json_5.jsonl"
+                    }
+                  }
+                }
+              }
+            },
+            "taskInfo": {
+              "name": "batch-prediction"
+            }
+          }
+        }
+      },
+      "inputDefinitions": {
+        "parameters": {
+          "image_dir": {
+            "type": "STRING"
+          }
+        }
+      }
+    },
+    "schemaVersion": "2.0.0",
+    "sdkVersion": "kfp-1.8.22"
+  },
+  "runtimeConfig": {
+    "gcsOutputDirectory": "gs://sam-pipeline-test",
+    "parameters": {
+      "image_dir": {
+        "stringValue": "batch_5"
+      }
+    }
+  }
+}
