@@ -5,7 +5,16 @@
         "executorLabel": "exec-batch-prediction",
         "inputDefinitions": {
           "parameters": {
-            "image_dir": {
+            "bucket_name": {
+              "type": "STRING"
+            },
+            "input_dir": {
+              "type": "STRING"
+            },
+            "max_mask": {
+              "type": "INT"
+            },
+            "output_dir": {
               "type": "STRING"
             },
             "prompt_json_file": {
@@ -38,11 +47,11 @@
             "command": [
               "sh",
               "-c",
-              "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.22' && \"$0\" \"$@\"\n",
+              "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'imantics' 'scipy' 'matplotlib' 'kfp==1.8.22' && \"$0\" \"$@\"\n",
               "sh",
               "-ec",
               "program_path=$(mktemp -d)\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\npython3 -m kfp.v2.components.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
-              "\nimport kfp\nfrom kfp.v2 import dsl\nfrom kfp.v2.dsl import *\nfrom typing import *\n\ndef batch_prediction(\n    image_dir: str,\n    prompt_json_file: str,\n    visualization: Output[Markdown],\n\n):\n    import torch\n    from typing import Dict, List\n    from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator\n    import base64\n    import numpy as np\n    import cv2\n    import logging\n    from google.cloud import storage\n    import base64\n    import json\n\n    storage_client = storage.Client()\n    bucket = storage_client.bucket('sam-pipeline-test')\n    # Get Model artifact from cloud storage\n    blob = bucket.blob('model_artifacts/sam_vit_b_01ec64.pth')\n    blob.download_to_filename('sam_vit_b_01ec64.pth')\n\n    #Load the model\n    sam = sam_model_registry[\"vit_b\"](checkpoint=\"sam_vit_b_01ec64.pth\")\n    print(torch.cuda.is_available())\n    sam.to(\"cuda\")\n    # Automatic mask generation\n    mask_generator = SamAutomaticMaskGenerator(sam)\n    # SAM Masking with prompts\n    sam_predictor = SamPredictor(sam)\n\n    # Initialize Images\n    blobs = bucket.list_blobs(prefix=image_dir)\n    image_extensions = ('.png', '.jpg', '.jpeg')\n    image_blobs = [blob for blob in blobs if blob.name.lower().endswith(image_extensions)]\n\n    #Prompt Json\n    blob = bucket.blob(f'{image_dir}/{prompt_json_file}')\n    prompt_json = json.loads(blob.download_as_text()) #returns prompts dictionary\n\n    #Reshaping the image\n    def reshape_image(image, size=256):\n        # Ratio for showing up in Markdown\n        if image.shape[0] < size and image.shape[1] < size: \n            ratio = 1\n        else: \n            ratio = size / max(image.shape[0], image.shape[1])\n        width = int(image.shape[1] * ratio)\n        height = int(image.shape[0] * ratio)\n        image = cv2.resize(image, (width, height))\n\n        return image\n\n    # Predict all images\n    results = []\n    for image_blob in image_blobs:\n        image_bytes = image_blob.download_as_bytes()\n        image_base64 = base64.b64encode(image_bytes).decode('utf-8')\n        print(image_blob.name)\n        jpg_as_np = np.frombuffer(image_bytes, dtype=np.uint8)\n        image = cv2.cvtColor(cv2.imdecode(jpg_as_np, flags=1), cv2.COLOR_BGR2RGB)\n        # Image resizing\n        image = reshape_image(image)\n        # Encoding it to base64 string\n        image_base64 = base64.b64encode(cv2.imencode('.png', image)[1]).decode()\n\n        # Predictions\n        prediction = {}\n        prediction[\"file_path\"] = image_blob.name\n        prediction[\"base64\"] = image_base64\n        prediction[\"image\"] = image.tolist()\n        prediction[\"masks\"] = {}\n\n        if image_blob.name in prompt_json: # Predicting with prompt inputs\n            prompt_input = np.array(prompt_json[image_blob.name]).reshape(1,2)\n            input_label = np.array([1])\n            masks, scores, logits = sam_predictor.predict(\n                                        point_coords=prompt_input,\n                                        point_labels=input_label,\n                                        multimask_output=False\n                                        )\n            h, w = masks.shape[-2:]\n            masks = masks.reshape(h, w)\n            prediction[\"masks\"]['mask_1'] = masks\n            prediction[\"prediction_type\"] = \"Predicting with Prompts\"\n\n        else: # Predicting without prompt inputs\n            masks = mask_generator.generate(image)\n            sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)\n            for idx, mask in enumerate(sorted_masks):\n            # TODO: Rewrite the result format, add more related scores and save it into a single json, with mask index\n                prediction[\"masks\"][f'mask_{idx}'] = mask['segmentation'].tolist()\n\n            prediction[\"prediction_type\"] = \"Predicting without Prompts\"\n\n\n        results.append(prediction)\n        torch.cuda.empty_cache()\n\n    # TODO: Use Kubeflow Output to save json\n\n    # TODO: Optimize the visualization\n    with open(visualization.path, 'w') as f:\n        alpha = 0.5\n        for result in results:\n            image = np.array(result[\"image\"])\n            f.write(f\"## All Masks \\n\")\n            f.write(f\"# {result['file_path']} \\n\")\n            f.write(\"<table><tr>\")\n            f.write(f'<td><img src=\"data:image/*;base64,{result[\"base64\"]}\" width=100% align=\"left\"></td></tr>\\n')\n            for mask_name, mask in result[\"masks\"].items():\n                f.write(f\"## {mask_name} \\n\\n\")\n                mask = np.array(mask)\n                mask_color = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)\n                mask_color[mask == 0] = [0, 0, 0]\n                mask_color[mask == 1] = [150, 0, 0]\n                mask = np.array(mask)\n                image[mask==1, :] = (1-alpha) * image[mask==1, :] + alpha * mask_color[mask==1, :3]\n                image_base64 = base64.b64encode(cv2.imencode('.png', image)[1]).decode()\n                f.write(\"<tr>\")\n                f.write(f'<td><img src=\"data:image/*;base64,{image_base64}\" width=100% align=\"left\"></td>')\n                f.write(\"</tr>\\n\")\n            f.write(\"</table>\\n\")\n\n"
+              "\nimport kfp\nfrom kfp.v2 import dsl\nfrom kfp.v2.dsl import *\nfrom typing import *\n\ndef batch_prediction(\n    bucket_name: str,\n    input_dir: str,\n    output_dir: str,\n    prompt_json_file: str,\n    max_mask: int,\n    visualization: Output[Markdown],\n):\n    import torch\n    from typing import Dict, List\n    from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator\n    import base64\n    import numpy as np\n    import cv2\n    import logging\n    from google.cloud import storage\n    import base64\n    import json\n    import time\n    from imantics import Polygons, Mask\n    from scipy.ndimage import median_filter\n    import matplotlib.pyplot as plt\n\n    def show_points(coords, labels, ax, marker_size=375):\n        pos_points = coords[labels==1]\n        neg_points = coords[labels==0]\n        ax.scatter(pos_points[:, 0], pos_points[:, 1], color='green', marker='*', s=marker_size, edgecolor='white', linewidth=1.25)\n        ax.scatter(neg_points[:, 0], neg_points[:, 1], color='red', marker='*', s=marker_size, edgecolor='white', linewidth=1.25)  \n\n    def show_mask(mask, ax, random_color=False):\n        if random_color:\n            color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)\n        else:\n            color = np.array([30/255, 144/255, 255/255, 0.6])\n        h, w = mask.shape[-2:]\n        mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)\n        ax.imshow(mask_image)\n\n    storage_client = storage.Client()\n    bucket = storage_client.bucket(bucket_name)\n    # Get Model artifact from cloud storage\n    blob = bucket.blob('model_artifacts/sam_vit_b_01ec64.pth')\n    blob.download_to_filename('sam_vit_b_01ec64.pth')\n\n    #Load the model\n    sam = sam_model_registry[\"vit_b\"](checkpoint=\"sam_vit_b_01ec64.pth\")\n    print(torch.cuda.is_available())\n    sam.to(\"cuda\")\n    # Automatic mask generation\n    mask_generator = SamAutomaticMaskGenerator(sam)\n    # SAM Masking with prompts\n    predictor = SamPredictor(sam)\n\n    # Initialize Images\n    blobs = bucket.list_blobs(prefix=f\"{input_dir}/\")\n    image_extensions = ('.png', '.jpg', '.jpeg')\n    image_blobs = [blob for blob in blobs if blob.name.lower().endswith(image_extensions)]\n\n    # Prompt Json\n    blob = bucket.blob(f'{input_dir}/{prompt_json_file}')\n    if blob.exists():\n        prompt_json = json.loads(blob.download_as_text()) #returns prompts dictionary\n    else:\n        prompt_json = None\n    print(\"prompt_json\")\n    print(prompt_json)\n\n    # Reshaping the image\n    def reshape_image(image, size=512):\n        # Ratio for showing up in Markdown\n        if image.shape[0] < size and image.shape[1] < size: \n            ratio = 1\n        else: \n            ratio = size / max(image.shape[0], image.shape[1])\n        width = int(image.shape[1] * ratio)\n        height = int(image.shape[0] * ratio)\n        image = cv2.resize(image, (width, height))\n        return ratio, image\n\n    # Predict all images\n    start_time_pred = time.time()\n    filenames, results = [], []\n    for image_blob in image_blobs:\n        filename = image_blob.name.split('/')[-1]\n        filenames.append(filename)\n        start_time = time.time()\n        image_blob.download_to_filename(filename)\n        print(f\"Image Downloading: {time.time() - start_time}s\")\n        ratio, image = reshape_image(cv2.cvtColor(cv2.imread(filename), cv2.COLOR_BGR2RGB))\n        if prompt_json and filename in prompt_json: # Predicting with prompt inputs\n            # prompt_info = prompt_json[image_blob.name.split('/')[-1]]\n            prompt_info = prompt_json[filename]\n            prompt_input, label_input = [], []\n            for label, points in prompt_info.items():\n                for point in points:\n                    point = [int(c * ratio) for c in point]\n                    prompt_input.append(point)\n                    label_input.append(int(label))\n            predictor.set_image(image)\n            start_time = time.time()\n            masks, scores, logits = predictor.predict(\n                                        point_coords=np.array(prompt_input),\n                                        point_labels=np.array(label_input),\n                                        multimask_output=False\n                                    )\n            print(f\"Prediction with Prompt: {time.time() - start_time}s\")\n            start_time = time.time()\n            result = {\n                \"filename\": filename,\n                \"image\": image,\n                \"prediction_type\" : \"Predicting with Prompts\",\n                \"prompt_input\": prompt_input,\n                \"label_input\": label_input,\n                \"ratio\": ratio\n            }\n            result[\"masks\"], result[\"polygon_vertices\"] = {}, {}\n            for idx, mask in enumerate(masks[:max_mask]):\n                median_filter_size = int(min(mask.shape)//20)\n                if median_filter_size % 2 == 0:\n                    median_filter_size += 1\n                mask = median_filter(mask, median_filter_size)\n                result[\"masks\"][f'mask_{idx}'] = mask\n                polygons = Mask(mask).polygons()\n                result[\"polygon_vertices\"][f'mask_{idx}'] = list(map(lambda x: x.tolist(), polygons.points))\n            print(f\"Postprocessing {time.time() - start_time}s\")\n        else: # Predicting without prompt inputs\n            start_time = time.time()\n            masks = mask_generator.generate(image)\n            print(f\"Prediction without Prompt: {time.time() - start_time}s\")\n            result = {\n                \"filename\": filename,\n                \"image\": image,\n                \"prediction_type\" : \"Predicting without Prompts\",\n                \"ratio\": ratio\n            }\n            sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)\n            result[\"masks\"], result[\"polygon_vertices\"] = {}, {}\n            start_time = time.time()\n            for idx, mask in enumerate(sorted(masks, key=(lambda x: x['area']), reverse=True)[:max_mask]):\n                mask = mask['segmentation']\n                median_filter_size = int(min(mask.shape)//20)\n                if median_filter_size % 2 == 0:\n                    median_filter_size += 1\n                mask = median_filter(mask, median_filter_size)\n                result[\"masks\"][f'mask_{idx}'] = mask\n                polygons = Mask(mask).polygons()\n                result[\"polygon_vertices\"][f'mask_{idx}'] = list(map(lambda x: x.tolist(), polygons.points))\n            print(f\"Postprocessing {time.time() - start_time}s\")\n        results.append(result)\n        torch.cuda.empty_cache()\n    print(f\"Time Taken for predictions, including preprocessing and postprocessing: {time.time() - start_time_pred}s\")\n\n    # Export Images to Output DIR\n    start_time = time.time()\n    alpha = 0.5\n    for filename, result in zip(filenames, results):\n        original_image_blob = bucket.blob(f\"{output_dir}/{filename}/original.jpg\")\n        original_image_blob.upload_from_filename(filename)\n        for mask_name, mask in result[\"masks\"].items():\n            # mask_color = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)\n            # mask_color[mask == 0] = [0, 0, 0]\n            # mask_color[mask == 1] = [255, 0, 0]\n            # img_mask = result['image'].copy()\n            # img_mask[mask==1, :] = (1-alpha) * img_mask[mask==1, :] + alpha * mask_color[mask==1, :3]\n            # cv2.imwrite(f'{mask_name}.jpg', cv2.cvtColor(img_mask, cv2.COLOR_RGB2BGR))  \n            mask = np.array(mask)\n            plt.figure(figsize=(10,10))\n            plt.imshow(result['image'])\n            show_mask(mask, plt)\n            if \"prompt_input\" in result:\n                input_point = np.array(result['prompt_input'])\n                input_label = np.array(result['label_input'])\n                show_points(input_point, input_label, plt)\n            plt.axis('off')\n            plt.savefig(f\"{mask_name}.jpg\")\n            plt.close()\n            bucket.blob(f\"{output_dir}/{filename}/{mask_name}.jpg\").upload_from_filename(f\"{mask_name}.jpg\")\n    print(f\"Time Taken for image exportations: {time.time() - start_time}s\")\n\n    # Export Results to Output DIR\n    start_time = time.time()\n    for result in results:\n        output_result = {}\n        output_result[\"filename\"] = result[\"filename\"]\n        output_result[\"prediction_type\"] = result[\"prediction_type\"]\n        output_result[\"polygon_vertices\"] = result[\"polygon_vertices\"]\n        output_result[\"ratio\"] = result[\"ratio\"]\n        json_object = json.dumps(output_result, indent=4)\n        with open(\"result.json\", \"w\") as outfile:\n            outfile.write(json_object)\n        bucket.blob(f\"{output_dir}/{result['filename']}/result.json\").upload_from_filename(\"result.json\")\n    print(f\"Time Taken for json exportations: {time.time() - start_time}s\")\n\n    # Visualization\n    with open(visualization.path, 'w') as f:\n        for result in results:\n            image = result[\"image\"]\n            f.write(f\"# {result['filename']} \\n\")\n            f.write(f\"## Prediction Type: {result['prediction_type']} \\n\")\n            f.write(\"<table>\")\n            f.write(\"<tr><td>\")\n            f.write(f'<img src=\"https://storage.cloud.google.com/{bucket_name}/{output_dir}/{result[\"filename\"]}/original.jpg\">')\n            f.write(\"</td>\")\n            f.write(\"<td></td><td></td><td></td></tr>\")\n            for idx, mask_name in enumerate(list(result[\"masks\"].keys())):\n                if idx % 4 == 0:\n                    f.write(\"<tr>\")\n                f.write(f'<td><img src=\"https://storage.cloud.google.com/{bucket_name}/{output_dir}/{result[\"filename\"]}/{mask_name}.jpg\"></td>')\n                if idx % 4 == 3:\n                    f.write(\"</tr>\")\n            if idx % 4 != 3:\n                f.write(\"</tr>\")\n            f.write(\"</table>\\n\\n\")\n\n"
             ],
             "image": "gcr.io/ml-ops-segment-anything/sam:latest",
             "resources": {
@@ -58,7 +67,7 @@
       }
     },
     "pipelineInfo": {
-      "name": "sam-pipeline-test"
+      "name": "sam-pipeline-test-batch-100"
     },
     "root": {
       "dag": {
@@ -72,15 +81,20 @@
             },
             "inputs": {
               "parameters": {
-                "image_dir": {
-                  "componentInputParameter": "image_dir"
+                "bucket_name": {
+                  "componentInputParameter": "bucket_name"
+                },
+                "input_dir": {
+                  "componentInputParameter": "input_dir"
+                },
+                "max_mask": {
+                  "componentInputParameter": "max_mask"
+                },
+                "output_dir": {
+                  "componentInputParameter": "output_dir"
                 },
                 "prompt_json_file": {
-                  "runtimeValue": {
-                    "constantValue": {
-                      "stringValue": "prompts_json_5.jsonl"
-                    }
-                  }
+                  "componentInputParameter": "prompt_json_file"
                 }
               }
             },
@@ -92,7 +106,19 @@
       },
       "inputDefinitions": {
         "parameters": {
-          "image_dir": {
+          "bucket_name": {
+            "type": "STRING"
+          },
+          "input_dir": {
+            "type": "STRING"
+          },
+          "max_mask": {
+            "type": "INT"
+          },
+          "output_dir": {
+            "type": "STRING"
+          },
+          "prompt_json_file": {
             "type": "STRING"
           }
         }
@@ -104,8 +130,20 @@
   "runtimeConfig": {
     "gcsOutputDirectory": "gs://sam-pipeline-test",
     "parameters": {
-      "image_dir": {
+      "bucket_name": {
+        "stringValue": "sam-pipeline-test"
+      },
+      "input_dir": {
         "stringValue": "batch_5"
+      },
+      "max_mask": {
+        "intValue": "10"
+      },
+      "output_dir": {
+        "stringValue": "batch_5_output"
+      },
+      "prompt_json_file": {
+        "stringValue": "json_prompts/prompts_json_5.jsonl"
       }
     }
   }
