@@ -1,5 +1,5 @@
-# ml-ops-segment-anything
-### CLoud architecture
+# MACHINE LEARNING-OPERATIONS-SEGMENT-ANYTHING
+![SAM-model-workflow](demo-notebooks/images/sam_workflow.png?raw=true)
 
 ### DEMO-NOTEBOOK FOLDER
 This has a jupyter notebook to demonstrate SAM in real-time
