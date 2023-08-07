@@ -67,7 +67,7 @@
       }
     },
     "pipelineInfo": {
-      "name": "sam-pipeline-test-batch-100"
+      "name": "sam-pipeline-test-batch-5"
     },
     "root": {
       "dag": {

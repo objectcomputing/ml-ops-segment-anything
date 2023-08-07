@@ -13,7 +13,7 @@ class CustomSamPredictor(Predictor):
 
     def __init__(self):
         super().__init__()
-        #self.predictor = None #uncomment to mask with prompts
+        self.predictor = None #uncomment to mask with prompts
         self.mask_generator = None #uncomment to mask without prompts
         self.sam = None
         self.model_type = "vit_b"
@@ -25,6 +25,7 @@ class CustomSamPredictor(Predictor):
     def load(self, artifacts_uri: str):
         """Loads the model artifacts."""
         prediction_utils.download_model_artifacts(artifacts_uri)
+        #Change the checkpoint name to whatever is being used
         self.sam = sam_model_registry[self.model_type](checkpoint="sam_vit_b_01ec64.pth")
         self.sam.to(device=self.device)
         
@@ -32,7 +33,7 @@ class CustomSamPredictor(Predictor):
     # preprocess the data, the image received as base64 is preprocessed
     # The prompt inputs are sent to predict method
     def preprocess(self, prediction_input: Dict) -> Dict:
-        print("************** IN PRE PROCESS **********************")
+        print("************** PRE PROCESSING **********************")
         prediction_input = prediction_input["instances"][0]
         image = prediction_input["image"]
         jpg_original = base64.b64decode(image)
@@ -43,12 +44,12 @@ class CustomSamPredictor(Predictor):
         if len(prediction_input) > 2: # Masking with prompts requires 3 inputs (file_path, image, input_points, input_label)
             """ Masking with prompts """
             print("PREDICTING WITH PROMPTS")
-            self.mask_with_prompts = True
             self.predictor = SamPredictor(self.sam)
             self.predictor.set_image(image) 
             del prediction_input["image"] 
         else: # Masking without prompts requires only image input
             """ Masking without prompts / automatic masking """
+            print("PREDICTING WITHOUT PROMPTS")
             self.mask_with_prompts = False
             self.mask_generator = SamAutomaticMaskGenerator(self.sam)
             prediction_input["image_cvtColor"] = image
@@ -58,6 +59,7 @@ class CustomSamPredictor(Predictor):
     # Get the predictions from the loaded model
     @torch.inference_mode()
     def predict(self, prediction_input: Dict) -> List:
+        print("************** PREDICTING **********************")
         """Performs prediction."""
         print(self.mask_with_prompts)
         if self.mask_with_prompts:
@@ -66,7 +68,7 @@ class CustomSamPredictor(Predictor):
             masks, scores, logits = self.predictor.predict(
                 point_coords=np.array(prediction_input["input_point"]).reshape(1,2),
                 point_labels=np.array(prediction_input["input_label"]),
-                multimask_output=True,
+                multimask_output=False,
             )
             
             return list((prediction_input["file_path"], masks, scores, logits))
@@ -82,6 +84,7 @@ class CustomSamPredictor(Predictor):
     # Returns the predictions as a dictionary
     def postprocess(self, prediction_results: List) -> Dict:
         """Postprocessing / construct response structure."""
+        print("************** POST PROCESSING **********************")
         prediction={}
         if self.mask_with_prompts:
             """ Prediction response / Masking with prompts """
@@ -93,8 +96,9 @@ class CustomSamPredictor(Predictor):
             """ Prediction response / Masking without prompts / automatic masking """
             prediction["file_path"] = prediction_results[0]
             prediction["image"] = prediction_results[1]
-            prediction["masks"] = {}
-            for idx, mask in enumerate(prediction_results[2]):
-                prediction["masks"][f'mask_{idx}'] = m.tolist() 
+            prediction["masks"] = []
+            for mask in prediction_results[2]:
+                mask["segmentation"] = mask["segmentation"].tolist()
+                prediction["masks"].append(mask) 
             
         return prediction
