@@ -1,4 +1,4 @@
-# MACHINE LEARNING-OPERATIONS-SEGMENT-ANYTHING
+# ML-Operations-Segment-Anything
 ![SAM-model-workflow](demo-notebooks/images/sam_workflow.png?raw=true)
 
 ### DEMO-NOTEBOOK FOLDER
