@@ -1,4 +1,5 @@
 # ML-Operations-Segment-Anything
+Cloud architecture leveraged to unlock segmentation of thousands of images using Google Cloud Platform
 ![SAM-model-workflow](demo-notebooks/images/sam_workflow.png?raw=true)
 
 ### DEMO-NOTEBOOK FOLDER
