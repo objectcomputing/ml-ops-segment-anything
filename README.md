@@ -9,8 +9,8 @@ Follow the steps below to enable GCP services usage:
 + Create a Repository in Artifacts Registry on GCP in standard docker format.
 + Create new Workbench instance in VertexAI and clone the [ml-ops-segment-anything](https://github.com/objectcomputing/ml-ops-segment-anything/tree/main)repository from terminal.
 + Create a bucket with unique name in Google Cloud Storage with default settings. Create the following folder inside the bucket:
-  - Folder named "sam-model".
-  - Folder named "batch-prediction"
+  - sam-checkpoint.
+  - batch-prediction.
 
 ## SAM Demo
 Run the [sam-demo-notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/demo-notebooks/sam-demo.ipynb) in demo-notebooks folder for examples on using SAM with prompts and automatically generating masks.
