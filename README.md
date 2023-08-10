@@ -91,6 +91,9 @@ Follow the instructions in [pipeline notebook](https://github.com/objectcomputin
 As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
 ![Static-visualization](demo-notebooks/images/static_visualization.png?raw=true)
 
+#### Pipeline Experiment Results
+![plot-1](demo-notebooks/images/plot_1.png?raw=true) ![plot-2](demo-notebooks/images/plot_2.png?raw=true)
+
 
 
 
