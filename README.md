@@ -70,9 +70,14 @@ Follow the steps below to deploy the model and test the endpoint on VertexAI:
 Register the model in Model Registry and use the **Model ID** in **Version Details** of the registered model in the [batch prediction notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_batch_prediction/batch_prediction.ipynb) to test Batch Predictions. Follow the instructions in the notebook to set up a batch prediction job.
 
 ## VertexAI Pipeline
-Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
+Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. 
 
-#### Base Imag
+Docker container image is given as base image input to batch prediction component in the pipeline. Run the [build script](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/build.sh) to build the base image and save it to a repository in Container Registry inside Artifacts Registry.
+
+Follow the instructions in [pipeline notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/pipeline.ipynb) to setup the pipeline job and go back to vertex AI pipelines to monitor logs and status of the pipeline job.
+
+As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
+![Static-visualization](demo-notebooks/images/static_visualization.png?raw=true)
 
 
 
