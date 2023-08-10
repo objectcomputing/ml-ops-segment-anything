@@ -69,7 +69,7 @@ Follow the steps below to deploy the model and test the endpoint on VertexAI:
 ## VertexAI Batch Predictions
 Register the model in Model Registry and use the **Model ID** in **Version Details** of the registered model in the [batch prediction notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_batch_prediction/batch_prediction.ipynb) to test Batch Predictions. Follow the instructions in the notebook to set up a batch prediction job.
 
-#### Troubleshooting
+### Troubleshooting
 In comparison to VertexAI Pipeline solution, VertexAI batch prediction is generally outclassed because of the following reasons:
 
 1. Out of Memory (OOM) issue will much more likely happen, due to extra configuration and mysterious default running in Batch Prediction runtime. As per the official documentation, Batch Prediction will take up to 40% (though Wallace thinks it's actually even higher) resources from a Nvidia T4 GPU.
@@ -77,28 +77,37 @@ In comparison to VertexAI Pipeline solution, VertexAI batch prediction is genera
 3. No access to fully control your codes. Batch Prediction will require you to follow the routine, including steps of model loading, preprocessing, prediction and postprocessing, meaning there will be a lot of time taken for correcting the input and output format between different functions, which is highly inefficient. 
 
 ## VertexAI Pipeline
-Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. The input to the batch prediction function component is a folder with a batch of images and a JSON file which holds the prompts to random set of images within the folder.
+Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. 
+
+The input to the batch prediction function component is a folder with a batch of images and a JSON file which holds the prompts to random set of images within the folder.
+
+### Prompts Format (Optional)
 The prompt JSON structure is:
 ```python
 {
   "file name" : {label: [co-ordinate prompts]}
 }
 ```
+The prompt file is not required. If not given, the pipeline will run all images without prompts by default.
 
-Docker container image is given as base image input to batch prediction component in the pipeline. Run the [build script](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/build.sh) to build the base image and save it to a repository in Container Registry inside Artifacts Registry.
-
+### Build Base Image
+Customized docker image is required as base image for each batch prediction component in the pipeline. 
+To build the base image, run the [build script](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/build.sh) This shell script will run through the predefined Dockerfile, build the docker image and save it to a repository in Container Registry inside Artifacts Registry.
 Open the Terminal and navigate to the folder with the build script and execute it with the following command:
 ```console
-(base) jupyter@sam:~/ml-ops-segment-anything/vertexAI_pipeline$ ./build.sh
+./build.sh
 ```
+
+### Trigger the pipeline for batch predictions
 For the purpose of simulating a pipeline run, We will create folder with duplicate images to give as an input to the batch prediction component. Follow the instructions and run the [pipeline prep notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/pipeline_exp_data_prep.ipynb) that creates a folder inside **pipeline** folder, which we will later submit as an input to the pipeline job.
 
 Follow the instructions in [pipeline notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/pipeline.ipynb) to setup the pipeline job and go back to vertex AI pipelines to monitor logs and status of the pipeline job.
 
+### Visualization
 As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
 ![Static-visualization](demo-notebooks/images/static_visualization.png?raw=true)
 
-#### Pipeline Experiment Results
+### Pipeline Experiment Results
 ![plot-1](demo-notebooks/images/plot_1.png?raw=true) ![plot-2](demo-notebooks/images/plot_2.png?raw=true)
 
 
