@@ -2,7 +2,7 @@
 Cloud architecture leveraged to unlock segmentation of thousands of images using Google Cloud Platform
 ![SAM-model-workflow](demo-notebooks/images/sam_workflow.png?raw=true)
 
-## Installation and GCP(Google Cloud Platform) Services config
+## Installation and GCP (Google Cloud Platform) Services config
 The code requires `python>=3.8`, as well as `pytorch>=1.7` and `torchvision>=0.8`. Installing both PyTorch and TorchVision with CUDA support is strongly recommended. Also other optional dependencies include opencv-python and matplotlib for masks post-processing. Follow the instructions carefully in each cell of every notebook for easy understanding of code and the necessary installations.
 
 Follow the steps below to enable GCP services usage:
@@ -68,6 +68,13 @@ Follow the steps below to deploy the model and test the endpoint on VertexAI:
   ```
 ## VertexAI Batch Predictions
 Register the model in Model Registry and use the **Model ID** in **Version Details** of the registered model in the [batch prediction notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_batch_prediction/batch_prediction.ipynb) to test Batch Predictions. Follow the instructions in the notebook to set up a batch prediction job.
+
+#### Troubleshooting
+In comparison to VertexAI Pipeline solution, VertexAI batch prediction is generally outclassed because of the following reasons:
+
+1. Out of Memory (OOM) issue will much more likely happen, due to extra configuration and mysterious default running in Batch Prediction runtime. As per the official documentation, Batch Prediction will take up to 40% (though Wallace thinks it's actually even higher) resources from a Nvidia T4 GPU.
+2. Much longer initialization time. Under the condition of Nvidia T4 GPU, the job initialization from batch prediction will take 40 minutes, much longer than 10 minutes in VertexAI Pipeline.
+3. No access to fully control your codes. Batch Prediction will require you to follow the routine, including steps of model loading, preprocessing, prediction and postprocessing, meaning there will be a lot of time taken for correcting the input and output format between different functions, which is highly inefficient. 
 
 ## VertexAI Pipeline
 Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. The input to the batch prediction function component is a folder with a batch of images and a JSON file which holds the prompts to random set of images within the folder.
