@@ -56,6 +56,7 @@ Follow the steps below to deploy the model and test the endpoint on VertexAI:
     "logits"                    : [logits]
   }
   ```
+  
   - Predicting without prompts
   ```python
   {
