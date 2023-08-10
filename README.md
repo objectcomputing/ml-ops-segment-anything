@@ -72,7 +72,7 @@ Register the model in Model Registry and use the **Model ID** in **Version Detai
 ## VertexAI Pipeline
 Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
 
-#### Base Image
+#### Base Imag
 
 
 
