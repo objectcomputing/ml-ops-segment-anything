@@ -7,6 +7,10 @@ import base64
 import numpy as np
 import cv2
 import logging
+from google.cloud import storage
+import time
+import os
+import json
 
 # custom prediction routine
 class CustomSamPredictor(Predictor):
@@ -19,6 +23,7 @@ class CustomSamPredictor(Predictor):
         self.model_type = "vit_b"
         self.device = "cuda"
         self.mask_with_prompts = True
+        self.bucket = None
         logging.basicConfig(level=logging.INFO)
     
     # Load the model
@@ -28,6 +33,8 @@ class CustomSamPredictor(Predictor):
         #Change the checkpoint name to whatever is being used
         self.sam = sam_model_registry[self.model_type](checkpoint="sam_vit_b_01ec64.pth")
         self.sam.to(device=self.device)
+        storage_client = storage.Client()
+        self.bucket = storage_client.bucket('segment-anything')
         
     
     # preprocess the data, the image received as base64 is preprocessed
@@ -55,7 +62,7 @@ class CustomSamPredictor(Predictor):
             prediction_input["image_cvtColor"] = image
         
         return prediction_input
-
+    
     # Get the predictions from the loaded model
     @torch.inference_mode()
     def predict(self, prediction_input: Dict) -> List:
@@ -77,9 +84,7 @@ class CustomSamPredictor(Predictor):
             masks = self.mask_generator.generate(prediction_input["image_cvtColor"])
             
             return list((prediction_input["file_path"], prediction_input["image"], masks))
-
-        
-        
+     
     
     # Returns the predictions as a dictionary
     def postprocess(self, prediction_results: List) -> Dict:
@@ -100,5 +105,20 @@ class CustomSamPredictor(Predictor):
             for mask in prediction_results[2]:
                 mask["segmentation"] = mask["segmentation"].tolist()
                 prediction["masks"].append(mask) 
-            
-        return prediction
+        
+        response_output = {}
+        # response_output["response_file_path"] = self.save_model_output_to_cloud_storage(prediction)
+        
+        return response_output
+    
+    
+#     def save_model_output_to_cloud_storage(self, output_json):
+#         out_file = str(int(time.time())) + ".jsonl"
+#         with open(out_file, "w") as outfile:
+#             json.dump(output_json, outfile)
+#         file_path = f"online-predict-results/{out_file}"
+#         blob = self.bucket.blob(file_path)
+#         blob.upload_from_filename(out_file)
+#         os.remove(out_file)
+        
+#         return file_path
