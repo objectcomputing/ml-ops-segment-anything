@@ -28,11 +28,11 @@ Run the [sam-demo-notebook](https://github.com/objectcomputing/ml-ops-segment-an
 ## VertexAI Online Predictions
 Deploying SAM to an endpoint in Vertex AI requires Custom Container with Custom Prediction Routine.
 
-The [source code](https://github.com/objectcomputing/ml-ops-segment-anything/tree/dev/vertexAI_online_predictions/src) folder in Online Predictions has [Custom Prediction Routine](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/src/custom_sam_predictor.py) and [requirements](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/src/requirements.txt) file that is required to build the custom container.
+The [source code](https://github.com/objectcomputing/ml-ops-segment-anything/tree/dev/vertexAI_online_predictions/src) folder in Online Predictions has [Custom Prediction Routine(CPR)](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/src/custom_sam_predictor.py) and [requirements](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/src/requirements.txt) file that is required to build the custom container. CPR has the capability of handling predictions with prompts and without prompts. 
 
 Follow the steps below to deploy the model and test the endpoint on VertexAI:
 
-+ Run the [Online Prediction Model Input Preparation](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/online_predict_model_input_prep.ipynb) notebook to generate 2 JSON files for Endpoint testing.
++ Run the [Online Prediction Model Input Preparation](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/online_predict_model_input_prep.ipynb) notebook to generate 2 JSON files for Endpoint testing. Also refer to the endpoint input JSON structure in the notebook.
 + Follow the instructions in each cell and run the [Containerization notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_online_predictions/containerise-deploy.ipynb) to build the custom container and push the container to the Repository created in Artifacts Registry on GCP. You can also deploy locally and test the endpoint.
 + Go to Model Registry on VertexAI to register the model for deployment:
   - Click IMPORT and under **Model Settings** select **Import an existing custom container**. Click on **BROWSE** and select the container from the Artifacts Registry.
@@ -70,7 +70,10 @@ Follow the steps below to deploy the model and test the endpoint on VertexAI:
 Register the model in Model Registry and use the **Model ID** in **Version Details** of the registered model in the [batch prediction notebook](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_batch_prediction/batch_prediction.ipynb) to test Batch Predictions. Follow the instructions in the notebook to set up a batch prediction job.
 
 ## VertexAI Pipeline
-Collection of notebooks to setting up the pipeline, allocating resources for batch predictions.
+Machine Learning Pipeline job for Segment-Anything Model is setup using Kubeflow SDK with component based approach. Here the Pipeline job is capable of handling a batch of images and processing them in sequence and finally outputing individual image segments upon original image and saving it into Cloud Storage. As a result of successful pipeline run, to enable Static Visualization, A markdown file is generated which shows individual images along with maximum 10 segments laid separately on the original image.
+
+#### Base Image
+
 
 
 
