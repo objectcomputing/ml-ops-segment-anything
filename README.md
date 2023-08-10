@@ -92,7 +92,9 @@ The prompt file is not required. If not given, the pipeline will run all images 
 
 ### Build Base Image
 Customized docker image is required as base image for each batch prediction component in the pipeline. 
+
 To build the base image, run the [build script](https://github.com/objectcomputing/ml-ops-segment-anything/blob/dev/vertexAI_pipeline/build.sh) This shell script will run through the predefined Dockerfile, build the docker image and save it to a repository in Container Registry inside Artifacts Registry.
+
 Open the Terminal and navigate to the folder with the build script and execute it with the following command:
 ```console
 ./build.sh
