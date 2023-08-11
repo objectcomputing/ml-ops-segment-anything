@@ -6,8 +6,11 @@ Cloud architecture leveraged to unlock segmentation of thousands of images using
 The code requires `python>=3.8`, as well as `pytorch>=1.7` and `torchvision>=0.8`. Installing both PyTorch and TorchVision with CUDA support is strongly recommended. Also other optional dependencies include opencv-python and matplotlib for masks post-processing. Follow the instructions carefully in each cell of every notebook for easy understanding of code and the necessary installations.
 
 Follow the steps below to enable GCP services usage:
++ Make sure you are not on Free Trial since the GPU are not allowed to be used in Free Trial accounts. You need to activate billing.
 + Create a Repository in Artifacts Registry on GCP in **standard docker format**.
++ On the VertexAI console **Enable All recommended API** when using it for the first time.
 + Create new Workbench instance in VertexAI with following configuration and clone the [ml-ops-segment-anything](https://github.com/objectcomputing/ml-ops-segment-anything/tree/main) repository.
+  - **Workbench type**: User-managed Notebooks
   - **Operating System**: Debian 11
   - **Environment**: Pytorch
   - **Machine Type**: n1-standard-2(1vCPUs, 7.5GB RAM)
