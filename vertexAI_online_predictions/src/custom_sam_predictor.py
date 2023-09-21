@@ -5,8 +5,10 @@ from google.cloud.aiplatform.utils import prediction_utils
 from segment_anything import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
 import base64
 import numpy as np
+from imantics import Polygons, Mask
 import cv2
 import logging
+from scipy.ndimage import median_filter
 
 
 class CustomSamPredictor(Predictor):
@@ -52,6 +54,35 @@ class CustomSamPredictor(Predictor):
         self.model_type = "vit_b" # change to the type of SAM checkpoint you are using
         self.device = device
         self.mask_with_prompts = True
+
+
+    def reshape_image(self, image, size=512):
+        """
+            Applies mask for an object in the image.
+
+            Parameters
+            ----------
+            image : np.ndarray
+                input image
+            size : int
+                size of resized image
+
+            Returns
+            -------
+            ratio, resized_image
+            
+        """
+        # Ratio for showing up in Markdown
+        if image.shape[0] < size and image.shape[1] < size: 
+            ratio = 1
+        else: 
+            ratio = size / max(image.shape[0], image.shape[1])
+        
+        width = int(image.shape[1] * ratio) #resized image width
+        height = int(image.shape[0] * ratio) #resized image height
+        resized_image = cv2.resize(image, (width, height)) # resized image
+        return ratio, resized_image
+
     
     def load(self, artifacts_uri: str):
         """
@@ -73,9 +104,9 @@ class CustomSamPredictor(Predictor):
         """ Change the checkpoint name to one of the three variants of SAM, simultaneously change the model_type in constructor """
         self.sam = sam_model_registry[self.model_type](checkpoint="sam_vit_b_01ec64.pth")
         self.sam.to(device=self.device)
+
         
-    
-    def preprocess(self, prediction_input: Dict) -> Dict:
+    def preprocess(self, prediction_input: List) -> Dict:
         """
             Data Preprocessing.
 
@@ -90,20 +121,21 @@ class CustomSamPredictor(Predictor):
                 Preprocessed data
         """
         print("************** PRE PROCESSING **********************")
-        prediction_input = prediction_input["instances"][0]
-        image = prediction_input["image"] # base64 format
+        image = prediction_input["instances"][0]["image"] # base64 format
         jpg_original = base64.b64decode(image)
         jpg_as_np = np.frombuffer(jpg_original, dtype=np.uint8)
         img = cv2.imdecode(jpg_as_np, flags=1)
         image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        """ Reshape the image """
+        ratio, image = self.reshape_image(image)
+        prediction_input['ratio'] = ratio
         
-        if len(prediction_input) > 2: # Masking with prompts requires 3 inputs (file_path, image, input_points, input_label)
+        if "input_point" in prediction_input: # Masking with prompts requires 3 inputs (file_path, image, input_points, input_label)
             """ Masking with prompts """
             print("PREDICTING WITH PROMPTS")
             
             self.predictor = SamPredictor(self.sam)
-            self.predictor.set_image(image) 
-            
+            self.predictor.set_image(image)
             del prediction_input["image"] # deleting image base64 string since it is not required henceforth
             
         else: # Masking without prompts requires only image input
@@ -112,13 +144,13 @@ class CustomSamPredictor(Predictor):
             
             self.mask_with_prompts = False
             self.mask_generator = SamAutomaticMaskGenerator(self.sam)
-            prediction_input["image_cvtColor"] = image
-        
+            prediction_input["image"] = image
         return prediction_input
-    
+
+
     # Get the predictions from the loaded model
     @torch.inference_mode()
-    def predict(self, prediction_input: Dict) -> List:
+    def predict(self, prediction_input: Dict) -> Dict:
         """
             Performs prediction.
 
@@ -133,7 +165,6 @@ class CustomSamPredictor(Predictor):
         """
         
         print("************** PREDICTING **********************")
-    
         if self.mask_with_prompts:
             """ Masking with prompts """
             print("PREDICTING WITH PROMPTS")
@@ -144,18 +175,51 @@ class CustomSamPredictor(Predictor):
                 multimask_output=False, # only one mask will be produced since multimask is set to FALSE
             )
             
-            return list((prediction_input["file_path"], masks, scores, logits))
+            result = {
+                "prediction_type" : "Predicting with Prompts",
+                "ratio": prediction_input['ratio']
+            }
+            result["polygon_vertices"] = {}
+            for idx, mask in enumerate(masks[:10]):
+                """ Perform Median Filtering on the mask"""
+                median_filter_size = int(min(mask.shape)//20)
+                if median_filter_size % 2 == 0:
+                    median_filter_size += 1
+                mask = median_filter(mask, median_filter_size)
+                
+                """ Generating Polygons representation of masks """
+                polygons = Mask(mask).polygons()
+                result["polygon_vertices"][f'mask_{idx}'] = list(map(lambda x: x.tolist(), polygons.points))
+            
+            # return list((prediction_input["file_path"], masks, scores, logits))
         else:
             """ Masking without prompts / automatic masking """
             print("PREDICTING WITHOUT PROMPTS")
             
-            masks = self.mask_generator.generate(prediction_input["image_cvtColor"])
+            masks = self.mask_generator.generate(prediction_input["image"])
+            result = {
+                "prediction_type" : "Predicting without Prompts",
+                "ratio": prediction_input['ratio']
+            }
+            sorted_masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
+            result["polygon_vertices"] = {}
             
-            return list((prediction_input["file_path"], prediction_input["image"], masks))
+            for idx, mask in enumerate(sorted(masks, key=(lambda x: x['area']), reverse=True)[:10]):
+                """ Perform Median Filtering on the mask"""
+                mask = mask['segmentation']
+                median_filter_size = int(min(mask.shape)//20)
+                if median_filter_size % 2 == 0:
+                    median_filter_size += 1
+                mask = median_filter(mask, median_filter_size)
+                
+                """ Generating Polygons representation of masks """
+                polygons = Mask(mask).polygons()
+                result["polygon_vertices"][f'mask_{idx}'] = list(map(lambda x: x.tolist(), polygons.points))
+        return result
      
     
     # Returns the predictions as a dictionary
-    def postprocess(self, prediction_results: List) -> Dict:
+    def postprocess(self, prediction_results: Dict) -> Dict:
         """
             Postprocessing / construct response structure.
 
@@ -169,26 +233,5 @@ class CustomSamPredictor(Predictor):
             prediction: Dict
                 Processed model predictions
         """
-        
-
         print("************** POST PROCESSING **********************")
-        
-        prediction={}
-        if self.mask_with_prompts:
-            print(" Prediction response / Masking with prompts ")
-            
-            prediction["file_path"] = prediction_results[0]
-            prediction["masks"] = prediction_results[1].tolist()
-            prediction["scores"] = prediction_results[2].tolist()
-            prediction["logits"] = prediction_results[3].tolist()
-        else:
-            print(" Prediction response / Masking without prompts / automatic masking ")
-            
-            prediction["file_path"] = prediction_results[0]
-            prediction["image"] = prediction_results[1]
-            prediction["masks"] = []
-            for mask in prediction_results[2]:
-                mask["segmentation"] = mask["segmentation"].tolist()
-                prediction["masks"].append(mask) 
-        
-        return prediction
+        return {"predictions": [prediction_results]}
